@@ -5,11 +5,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/api")
-public class HelloController {
+public class HomeController {
 
-    @GetMapping("/hello")
-    public String hello() {
-        return "Application running...";
+    @GetMapping("/")
+    public String home() {
+
+        return "Google OAuth Login Successful";
     }
 }

@@ -4,10 +4,12 @@ import com.example.reporting_system.entity.EmployeeTransaction;
 import com.example.reporting_system.repository.EmployeeTransactionRepository;
 import com.example.reporting_system.service.EmailService;
 import com.example.reporting_system.service.GoogleDriveService;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -22,6 +24,9 @@ public class ReportScheduler {
     private final EmployeeTransactionRepository repository;
     private final EmailService emailService;
     private final GoogleDriveService googleDriveService;
+
+    @Value("${spring.security.oauth2.client.registration.google.client-id}")
+    private String clientId;
 
     public ReportScheduler(
             EmployeeTransactionRepository repository, EmailService emailService, GoogleDriveService googleDriveService) {
@@ -122,10 +127,10 @@ public class ReportScheduler {
 
             outputStream.close();
 
-            String driveLink =
-                    googleDriveService.uploadFile(fileName);
-
-            log.info("Google Drive Link: {}", driveLink);
+//            String driveLink =
+//                    googleDriveService.uploadFile(fileName);
+//
+//            log.info("Google Drive Link: {}", driveLink);
 
             lastRunTime = LocalDateTime.now();
 
@@ -145,5 +150,12 @@ public class ReportScheduler {
             log.error("Exception: {}", ex);
 
         }
+
+
+
+    }
+    @PostConstruct
+    public void test() {
+        log.info("ClientId:{}",clientId);
     }
 }

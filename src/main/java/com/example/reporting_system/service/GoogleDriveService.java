@@ -1,128 +1,101 @@
 package com.example.reporting_system.service;
 
-import com.google.api.client.auth.oauth2.Credential;
-import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
-import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
-import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
-import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
-import com.google.api.client.http.FileContent;
-import com.google.api.client.json.gson.GsonFactory;
-import com.google.api.client.util.store.FileDataStoreFactory;
-import com.google.api.services.drive.Drive;
-import com.google.api.services.drive.DriveScopes;
-import com.google.api.services.drive.model.Permission;
+
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
-import java.io.InputStreamReader;
-import java.nio.file.Paths;
-import java.util.Collections;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 @Service
 @Slf4j
 public class GoogleDriveService {
 
-    private static final String APPLICATION_NAME =
-            "Reporting System";
+    private final OAuth2AuthorizedClientService clientService;
 
-    private static final GsonFactory JSON_FACTORY =
-            GsonFactory.getDefaultInstance();
-
-    private static final String TOKENS_DIRECTORY_PATH =
-            "tokens";
-
-    private Credential getCredentials() throws Exception {
-
-        GoogleClientSecrets clientSecrets =
-                GoogleClientSecrets.load(
-                        JSON_FACTORY,
-                        new InputStreamReader(
-                                getClass().getResourceAsStream(
-                                        "/credentials.json"
-                                )
-                        )
-                );
-
-        GoogleAuthorizationCodeFlow flow =
-                new GoogleAuthorizationCodeFlow.Builder(
-                        GoogleNetHttpTransport.newTrustedTransport(),
-                        JSON_FACTORY,
-                        clientSecrets,
-                        Collections.singleton(DriveScopes.DRIVE_FILE)
-                )
-                        .setDataStoreFactory(
-                                new FileDataStoreFactory(
-                                        Paths.get(TOKENS_DIRECTORY_PATH)
-                                                .toFile()
-                                )
-                        )
-                        .setAccessType("offline")
-                        .build();
-
-        LocalServerReceiver receiver =
-                new LocalServerReceiver.Builder()
-                        .setPort(8888)
-                        .build();
-
-        return new AuthorizationCodeInstalledApp(
-                flow,
-                receiver
-        ).authorize("user");
+    public GoogleDriveService(OAuth2AuthorizedClientService clientService) {
+        this.clientService = clientService;
     }
 
-    public String uploadFile(String filePath)
-            throws Exception {
+    private String getAccessToken() {
 
-        Drive driveService =
-                new Drive.Builder(
-                        GoogleNetHttpTransport
-                                .newTrustedTransport(),
-                        JSON_FACTORY,
-                        getCredentials()
-                )
-                        .setApplicationName(
-                                APPLICATION_NAME
-                        )
-                        .build();
+        OAuth2AuthenticationToken authentication =(OAuth2AuthenticationToken) SecurityContextHolder.getContext().getAuthentication();
 
-        com.google.api.services.drive.model.File fileMetadata =
-                new com.google.api.services.drive.model.File();
+        if (authentication == null) {
+            throw new RuntimeException(
+                    "No authenticated user found. Google OAuth login required."
+            );
+        }
+        OAuth2AuthorizedClient client =
 
-        fileMetadata.setName(
-                Paths.get(filePath)
-                        .getFileName()
-                        .toString()
-        );
-
-        java.io.File file =
-                new java.io.File(filePath);
-
-        FileContent mediaContent =
-                new FileContent(
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        file
+                clientService.loadAuthorizedClient(
+                        authentication.getAuthorizedClientRegistrationId(),
+                        authentication.getName()
                 );
 
-        com.google.api.services.drive.model.File uploadedFile =
-                driveService.files()
-                        .create(fileMetadata, mediaContent)
-                        .setFields("id, webViewLink")
-                        .execute();
+        return client.getAccessToken().getTokenValue();
+    }
 
-        Permission permission =
-                new Permission();
+    public String uploadFile(String filePath) throws Exception {
 
-        permission.setType("anyone");
+        String accessToken = getAccessToken();
 
-        permission.setRole("reader");
+        File file = new File(filePath);
 
-        driveService.permissions()
-                .create(uploadedFile.getId(), permission)
-                .execute();
+        String boundary = "----boundary";
+        String LINE_FEED = "\r\n";
 
-        log.info("File uploaded to Google Drive");
+        URL url = new URL(
+                "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+        );
 
-        return uploadedFile.getWebViewLink();
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setDoOutput(true);
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Authorization", "Bearer " + accessToken);
+        conn.setRequestProperty("Content-Type", "multipart/related; boundary=" + boundary);
+
+        try (OutputStream outputStream = conn.getOutputStream();
+             PrintWriter writer = new PrintWriter(new OutputStreamWriter(outputStream, "UTF-8"), true)) {
+
+            // Metadata
+            writer.append("--" + boundary).append(LINE_FEED);
+            writer.append("Content-Type: application/json; charset=UTF-8").append(LINE_FEED);
+            writer.append(LINE_FEED);
+            writer.append("{\"name\":\"" + file.getName() + "\"}").append(LINE_FEED);
+
+            // File content
+            writer.append("--" + boundary).append(LINE_FEED);
+            writer.append("Content-Type: application/octet-stream").append(LINE_FEED);
+            writer.append(LINE_FEED);
+            writer.flush();
+
+            FileInputStream inputStream = new FileInputStream(file);
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+            }
+
+            inputStream.close();
+
+            writer.append(LINE_FEED);
+            writer.append("--" + boundary + "--").append(LINE_FEED);
+        }
+
+        int responseCode = conn.getResponseCode();
+
+        if (responseCode == 200 || responseCode == 201) {
+            log.info("File uploaded successfully");
+            return "Upload Success";
+        } else {
+            throw new RuntimeException("Upload failed: " + conn.getResponseMessage());
+        }
     }
 }
