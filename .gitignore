@@ -1,0 +1,14 @@
+# OAuth / secrets
+*.json
+tokens/
+credentials/
+
+# Spring Boot
+target/
+
+# IntelliJ
+.idea/
+*.iml
+
+# logs
+*.log
